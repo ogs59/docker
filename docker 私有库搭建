@@ -1,0 +1,328 @@
+docker 私有库
+
+参考链接：http://www.jianshu.com/p/f2705a5da6a2
+
+1.6.5升级内核
+
+内核升级：
+
+rpm -Uvh http://www.elrepo.org/elrepo-release-6-6.el6.elrepo.noarch.rpm
+
+yum --enablerepo=elrepo-kernel install -y kernel-lt
+
+sed -i 's/default=1/default=0/g' /boot/grub/grub.conf
+
+reboot
+
+docker安装
+
+yum install docker-io
+
+yum upgrade device-mapper-libs
+
+
+
+
+
+Registry概念
+
+Registry是一个无状态的，高可扩展的服务器端应用程序，用于存储和分发Docker Image。
+依赖安装
+
+安装Docker
+
+要使用Docker Registry，当然首先要安装Docker。假设你已经安装好Docker。没有安装好可以参考官方文档
+
+安装Docker-compose
+
+Docker-compose是一个非常有用的Docker运行，管理的工具。你可以通过定义compose文件，使用简单的一条命令同时起多个Docker Container运行不同的服务。Docker-compose对于开发，测试，环境保存以及CI都提供了非常大的便利。
+Docker-compose是用Python开发的一个工具，所以可以用pip直接安装。
+$ pip install docker-compose
+
+
+需要注意的是，docker-compose可能对requests module的版本有限制，而本机上可能安装了更高版本的requests模块，造成运行时报错。可以使用pip-conflict-checker检查版本冲突，卸载不合适的版本，重新安装一个合适的版本。
+
+$ pip install pip-conflict-checker  
+$ pipconflictchecker  
+$ pip uninstall requests  
+$ pip install requests==2.7.0
+
+实际使用操作中使用pip安装的docker-compose可能在执行时还会报代码有bug。
+
+所以推荐直接从github中下载稳定的release版本安装。
+
+$ curl -L https://github.com/docker/compose/releases/download/1.5.2/docker-compose-`uname -s`-`uname -m` > /usr/local/bin/docker-compose  
+$ chmod +x /usr/local/bin/docker-compose
+$ ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
+
+安装htpasswd
+
+因为需要使用nginx提供安全验证的功能，需要一个地方放置用户名和密码对。
+使用由httpd-tools提供的htpasswd工具生成用户名密码对。
+安装httpd-tools.
+$ yum install httpd-tools
+运行Registry Container并使用Nginx做代理
+
+运行nginx和registry容器
+
+创建一个工作目录，例如/data/progrmas/docker，并在该目录下创建docker-compose.yml文件，将以下docker-compose.yml内容复制粘贴到你的docker-compose.yml文件中。
+内容大致意思为，基于“nginx:1.9” image运行nginx容器，暴露容器443端口到host 443端口。并挂载当前目录下的nginx/目录为容器的/etc/nginx/config.d目录。
+nginx link到registry容器。基于registry:2 image创建registry容器，将容器5000端口暴露到host 5000端口，使用环境变量指明使用/data为根目录，并将当前目录下data/文件夹挂载到容器的/data目录。
+
+$ mkdir /data/progrmas/docker -p
+$ cd /data/programs/docker
+$ mkdir data && mkdir nginx
+
+$ cat /data/programs/docker/docker-compose.yml
+nginx:  
+  image: "nginx:1.9"  
+  ports:  
+    - 443:443  
+  links:  
+    - registry:registry  
+  volumes:  
+    - ./nginx/:/etc/nginx/conf.d  
+registry:  
+  image: registry:2  
+  ports:  
+    - 127.0.0.1:5000:5000  
+  environment:  
+    REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /data  
+  volumes:  
+
+    - ./data:/data
+
+配置nginx
+
+在nginx目录中创建registry.conf文件配置nginx。配置nginx与registry的关系，转发端口，以及其他nginx的配置选项。复制，粘贴如下内容到你的registry.conf文件中：
+
+$ cat /data/programs/docker/nginx/registry.conf
+upstream docker-registry {  
+  server registry:5000;  
+}  
+
+server {  
+  listen 443;  
+  server_name myregistrydomain.com;  
+
+  # SSL  
+  # ssl on;  
+  # ssl_certificate /etc/nginx/conf.d/domain.crt;  
+  # ssl_certificate_key /etc/nginx/conf.d/domain.key;  
+
+  # disable any limits to avoid HTTP 413 for large image uploads  
+  client_max_body_size 0;  
+
+  # required to avoid HTTP 411: see Issue #1486 (https://github.com/docker/docker/issues/1486)  
+  chunked_transfer_encoding on;  
+
+  location /v2/ {  
+    # Do not allow connections from docker 1.5 and earlier  
+    # docker pre-1.6.0 did not properly set the user agent on ping, catch "Go *" user agents  
+    if ($http_user_agent ~ "^(docker\/1\.(3|4|5(?!\.[0-9]-dev))|Go ).*$" ) {  
+      return 404;  
+    }  
+
+    # To add basic authentication to v2 use auth_basic setting plus add_header  
+    # auth_basic "registry.localhost";  
+    # auth_basic_user_file /etc/nginx/conf.d/registry.password;  
+    # add_header 'Docker-Distribution-Api-Version' 'registry/2.0' always;  
+
+    proxy_pass                          http://docker-registry;  
+    proxy_set_header  Host              $http_host;   # required for docker client's sake  
+    proxy_set_header  X-Real-IP         $remote_addr; # pass on real client's IP  
+    proxy_set_header  X-Forwarded-For   $proxy_add_x_forwarded_for;  
+    proxy_set_header  X-Forwarded-Proto $scheme;  
+    proxy_read_timeout                  900;  
+  }  
+
+}
+
+配置文件创建完成后，回到工作目录执行docker-compose up运行registry和nginx容器。
+
+
+$ docker-compose up
+Starting docker_registry_1
+Starting docker_nginx_1
+Attaching to docker_registry_1, docker_nginx_1
+registry_1 | time="2016-01-08T11:22:41Z" level=info msg="Starting upload purge in 7m0s" go.version=go1.5.2 instance.id=4c7af230-a76b-4235-9a8d-2e552c2dbab8 version=v2.2.1
+registry_1 | time="2016-01-08T11:22:41Z" level=warning msg="No HTTP secret provided - generated random secret. This may cause problems with uploads if multiple registries are behind a load-balancer. To provide a shared secret, fill in http.secret in the configuration file or set the REGISTRY_HTTP_SECRET environment variable." go.version=go1.5.2 instance.id=4c7af230-a76b-4235-9a8d-2e552c2dbab8 version=v2.2.1
+registry_1 | time="2016-01-08T11:22:41Z" level=info msg="redis not configured" go.version=go1.5.2 instance.id=4c7af230-a76b-4235-9a8d-2e552c2dbab8 version=v2.2.1
+registry_1 | time="2016-01-08T11:22:41Z" level=info msg="using inmemory blob descriptor cache" go.version=go1.5.2 instance.id=4c7af230-a76b-4235-9a8d-2e552c2dbab8 version=v2.2.1
+registry_1 | time="2016-01-08T11:22:41Z" level=info msg="listening on 0.0.0.0:5000" go.version=go1.5.2 instance.id=4c7af230-a76b-4235-9a8d-2e552c2dbab8 version=v2.2.1
+registry_1 | time="2016-01-08T11:22:49Z" level=info msg="response completed" go.version=go1.5.2 http.request.host="localhost:5000" http.request.id=1455af27-cbf6-4ab2-8f22-4de35d2aa507 http.request.method=GET http.request.remoteaddr="192.168.42.1:39027" http.request.uri="/v2/" http.request.useragent="curl/7.19.7 (x86_64-redhat-linux-gnu) libcurl/7.19.7 NSS/3.19.1 Basic ECC zlib/1.2.3 libidn/1.18 libssh2/1.4.2" http.response.contenttype="application/json; charset=utf-8" http.response.duration=3.108632ms http.response.status=200 http.response.written=2 instance.id=4c7af230-a76b-4235-9a8d-2e552c2dbab8 version=v2.2.1
+
+执行docker-compose up后。注意是否有容器启动失败的消息，如果容器启动失败的消息，需要检查网络，是否能从dockerhub上pull image（需代理，或使用使用国内镜像，使用国内镜像需更改docker-compose.yml文件中image项）。也由可能粘贴配置文件错误，需仔细检查。
+
+启动后也可以使用docker ps命令查看是否两个容器都正常运行。
+
+$ docker ps
+CONTAINER ID        IMAGE               COMMAND                CREATED             STATUS              PORTS                          NAMES
+28ac3aba9a22        nginx:1.9           "nginx -g 'daemon of   38 seconds ago      Up 37 seconds       80/tcp, 0.0.0.0:443->443/tcp   docker_nginx_1      
+0cddc713022f        registry:2          "/bin/registry /etc/   38 seconds ago      Up 37 seconds       127.0.0.1:5000->5000/tcp       docker_registry_1
+
+确定docker容器都正常运行后，用curl 命令验证功能是否正常运行。使得localhost:5000和localhost:443访问registry都应该返回{}。
+
+#都是返回{}
+curl http://localhost:5000/v2/  
+curl http://localhost:443/v2/
+
+使用ctrl-c退出docker-compose，继续后面的步骤。
+
+添加用户名和密码
+
+在/data/programs/docker/nginx目录下执行下面命令创建用户名和密码对，如果要创建多个用户名和密码对，则不是使用“-c“选项。
+$ htpasswd -c registry.password docker
+然后修改Registry.conf文件，取消下面三行的注释。
+
+auth_basic "registry.localhost";  
+auth_basic_user_file /etc/nginx/conf.d/registry.password;  
+add_header 'Docker-Distribution-Api-Version' 'registry/2.0' always;
+
+再次执行docker-compose up运行registry，这时使用localhost:5000端口访问得到的结果为”{}”,但是使用localhost:443访问将得到”401 Authorisation Required“的提示。加入用户名和密码验证才能得到与直接访问registry 5000端口相同的结果。
+
+$ curl http://localhost:5000/v2/  
+{}
+
+$ curl http://localhost:443/v2/
+<html>
+<head><title>401 Authorization Required</title></head>
+<body bgcolor="white">
+<center><h1>401 Authorization Required</h1></center>
+<hr><center>nginx/1.9.9</center>
+</body>
+</html>
+
+$ curl http://docker:123456@localhost:443/v2/
+{}
+
+加入SSL验证
+
+如果你有经过认证机构认证的证书，则直接使用将证书放入nginx目录下即可。如果没有，则使用openssl创建自己的证书。
+进行/data/programs/docker/nginx目录
+
+    生成一个新的root key
+
+$ openssl genrsa -out devdockerCA.key 2048
+
+    生成根证书（一路回车即可）
+
+$ openssl req -x509 -new -nodes -key devdockerCA.key -days 10000 -out devdockerCA.crt
+
+    为server创建一个key。（这个key将被nginx配置文件registry.con中ssl_certificate_key域引用）
+
+$openssl genrsa -out domain.key 2048
+
+    制作证书签名请求。注意在执行下面命令时，命令会提示输入一些信息，”Common Name”一项一定要输入你的域名（官方说IP也行，但是也有IP不能加密的说法），其他项随便输入什么都可以。不要输入任何challenge密码，直接回车即可。
+
+    $ openssl req -new -key domain.key -out dev-docker-registry.com.csr
+    You are about to be asked to enter information that will be incorporated
+    into your certificate request.
+    What you are about to enter is what is called a Distinguished Name or a DN.
+    There are quite a few fields but you can leave some blank
+    For some fields there will be a default value,
+    If you enter '.', the field will be left blank.
+    Country Name (2 letter code) [XX]:
+    State or Province Name (full name) []:
+    Locality Name (eg, city) [Default City]:
+    Organization Name (eg, company) [Default Company Ltd]:
+    Organizational Unit Name (eg, section) []:
+    Common Name (eg, your name or your server's hostname) []:docker-registry.com
+    Email Address []:
+    Please enter the following 'extra' attributes
+    to be sent with your certificate request
+    A challenge password []:
+    An optional company name []:
+
+    签署认证请求
+
+$ openssl x509 -req -in dev-docker-registry.com.csr -CA devdockerCA.crt -CAkey devdockerCA.key -CAcreateserial -out domain.crt -days 10000
+
+    配置nginx使用证书
+
+修改registry.conf配置文件，取消如下三行的注释
+
+ssl on;  
+ssl_certificate /etc/nginx/conf.d/domain.crt;  
+ssl_certificate_key /etc/nginx/conf.d/domain.key;
+
+    运行Registry
+
+执行docker-compose up -d在后台运行Registry，并使用curl验证结果。这时使用localhost:5000端口仍然可以直接访问Registry，但是如果使用443端口通过nginx代理访问，因为已经加了SSL认证，所以使用http将返回“400 bad request”
+
+$ curl http://localhost:5000/v2/
+{}
+$ curl http://localhost:443/v2/
+<html>
+<head><title>400 The plain HTTP request was sent to HTTPS port</title></head>
+<body bgcolor="white">
+<center><h1>400 Bad Request</h1></center>
+<center>The plain HTTP request was sent to HTTPS port</center>
+<hr><center>nginx/1.9.9</center>
+</body>
+</html>
+
+应该使用https协议
+
+$ curl https://localhost:443/v2/
+curl: (60) Peer certificate cannot be authenticated with known CA certificates
+More details here: http://curl.haxx.se/docs/sslcerts.html
+curl performs SSL certificate verification by default, using a "bundle"
+ of Certificate Authority (CA) public keys (CA certs). If the default
+ bundle file isn't adequate, you can specify an alternate file
+ using the --cacert option.
+If this HTTPS server uses a certificate signed by a CA represented in
+ the bundle, the certificate verification probably failed due to a
+ problem with the certificate (it might be expired, or the name might
+ not match the domain name in the URL).
+If you'd like to turn off curl's verification of the certificate, use
+ the -k (or --insecure) option.
+
+由于是使用的未经任何认证机构认证的证书，并且还没有在本地应用自己生成的证书。所以此时会提示使用的是未经认证的证书，可以使用“-k"选项不进行验证。
+
+$ curl -k https://localhost:443/v2/
+<html>
+<head><title>401 Authorization Required</title></head>
+<body bgcolor="white">
+<center><h1>401 Authorization Required</h1></center>
+<hr><center>nginx/1.9.9</center>
+</body>
+</html>
+
+客户端使用Registry
+
+添加证书
+
+Centos 6/7 添加证书具体步骤如下
+
+
+客户端设置：
+
+安装ca-certificates包
+yum install ca-certificates
+
+使能动态CA配置功能
+update-ca-trust force-enable
+
+将key拷贝到/etc/pki/ca-trust/source/anchors/
+cp devdockerCA.crt /etc/pki/ca-trust/source/anchors/
+
+使新拷贝的证书生效
+update-ca-trust extract
+
+证书拷贝后，需要重启docker以保证docker能使用新的证书
+service docker restart
+
+
+私有库查询
+
+https://reg.chaoke.ren/v2/_catalog
+
+
+curl -u docker:channel https://reg.chaoke.ren/v2/_catalog
+
+
+
+
+nohup docker-compose up /dev/null 2>&1 
+

@@ -1,0 +1,100 @@
+
+1.升级内核
+
+cd /etc/yum.repos.d
+wget http://www.hop5.in/yum/el6/hop5.repo
+yum install kernel-ml-aufs kernel-ml-aufs-devel
+reboot
+
+2.修改内核文件
+
+vim /etc/grub.conf
+修改default = 0
+
+3.安装docker
+
+yum -y install docker-io
+
+vi /etc/sysconfig/docker
+
+添加
+other_args="-H 0.0.0.0:5555"
+
+
+4.启动
+
+service docker start
+
+解决启动问题
+docker: relocation error: docker: symbol dm_task_get_info_with_deferred_remove, version Base not defined in file libdevmapper.so.1.02 with link time 
+
+yum upgrade device-mapper-libs
+
+
+
+如何删除docker images/containersdocker rm $(docker ps -a -q)
+
+docker images往往不知不觉就占满了硬盘空间，为了清理冗余的image，可采用以下方法：
+
+1.进入root权限
+
+sudo su
+
+
+2.停止所有的container，这样才能够删除其中的images：
+
+docker stop $(docker ps -a -q)
+
+如果想要删除所有container的话再加一个指令：
+
+docker rm $(docker ps -a -q)
+
+
+3.查看当前有些什么images
+
+docker images
+
+
+4.删除images，通过image的id来指定删除谁
+
+docker rmi <image id>
+
+想要删除untagged images，也就是那些id为<None>的image的话可以用
+
+docker rmi $(docker images | grep "^<none>" | awk "{print $3}")
+
+
+要删除全部image的话
+
+docker rmi $(docker images -q)
+
+
+
+clent
+
+cd /mnt/ 
+keytool -printcert -sslserver 121.42.158.216:443 -rfc >nexus.yonyou.com.crt
+
+cp nexus.yonyou.com.crt /etc/pki/ca-trust/source/anchors/
+
+update-ca-trust enable
+
+update-ca-trust
+
+
+跳过tls验证。
+vi /etc/sysconfig/docker
+
+other_args="--selinux-enabled=true --insecure-registry 127.0.0.1:5000"
+
+
+
+
+
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain  /Users/carl_qi/Downloads/devdockerCA.crt
+
+
+
+sudo security delete-certificate -c devdockerCA.crt
+
+

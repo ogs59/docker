@@ -1,0 +1,86 @@
+docker 操作
+
+docker rm -f $(docker ps -a -q)
+
+contaier
+
+consul members
+
+docker添加网卡
+
+docker service publish test-bridge.bridge      发布服务
+
+docker service attach test1 test-bridge.bridge  绑定服务
+
+
+
+
+最新版命令
+docker network ls
+
+docker service ls
+
+
+mount -t aufs -o br=/root/dir1=ro:/root/dir2/rw none /root/aufs
+
+
+
+dd if=/dev/zero of=a.dat bs=2M count=100
+
+
+mount -t overlay overlay -oldwerdir=/root/lower,upperdir=/root/upper /root/merged
+
+
+
+
+docker run -it --name data -v /root/dir1:/root mysql sh
+
+docker run -it --name data2 --volumes-from data mysql sh
+
+
+
+
+获取正在运行容器的日志
+
+docker logs -f --tail 10 94c6b3c3f04a
+
+
+ yum install java-1.8.0-openjdk.x86_64
+
+
+ 
+
+ 构建命令：
+ docker build -t "$(DOCKER_IMAGE)" .
+
+ vim Dockerfile
+
+
+FROM reg.chaoke.ren/centos6:6.5
+
+MAINTAINER carl
+
+run  yum install java-1.8.0-openjdk.x86_64 -y
+
+
+docker commit 创建新镜像
+
+docker commit container_id jenkins:1  
+
+
+docker run --name jenkins -p 8080:8080 -v /var/jenkins_home jenkins/jenkins
+
+
+
+docker 权限管理
+
+https://yq.aliyun.com/articles/53990
+
+[jenkins]
+name=Jenkins-stable
+baseurl=http://pkg.jenkins.io/redhat-stable
+gpgcheck=1
+
+
+
+
